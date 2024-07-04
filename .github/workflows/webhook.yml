@@ -1,0 +1,78 @@
+name: CI
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # すべての履歴をフェッチ
+      - name: Run a one-line script
+        run: echo Hello, world!
+      - name: Run a multi-line script
+        run: |
+          echo Add other actions to build,
+          echo test, and deploy your project.
+      - name: Send webhook on push or pull request
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: |
+          # リポジトリ名を取得
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          
+          # イベントタイプに応じて情報を取得
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+            COMMIT_MESSAGE="${{ github.event.pull_request.title }}"
+            
+            # PRの差分を取得（最大1000行に制限）
+            DIFF=$(gh pr diff $PR_NUMBER | head -n 1000)
+          else
+            COMMIT_MESSAGE="${{ github.event.head_commit.message }}"
+            
+            # 最新のコミットの差分を取得（最大1000行に制限）
+            DIFF=$(git diff HEAD^ HEAD | head -n 1000)
+          fi
+          
+          DIFF_LINES=$(echo "$DIFF" | wc -l)
+          
+          # JSONペイロードを作成
+          PAYLOAD=$(jq -n \
+            --arg repo "$REPO_NAME" \
+            --arg event "${{ github.event_name }}" \
+            --arg commit_msg "$COMMIT_MESSAGE" \
+            --arg diff_lines "$DIFF_LINES" \
+            --arg diff "$DIFF" \
+            '{
+              repository: $repo,
+              event_type: $event,
+              commit_message: $commit_msg,
+              diff_lines: $diff_lines,
+              diff: $diff
+            }')
+          
+          # ペイロードサイズを確認
+          PAYLOAD_SIZE=$(echo -n "$PAYLOAD" | wc -c)
+          echo "Payload size: $PAYLOAD_SIZE bytes"
+          
+          # Webhookを送信
+          RESPONSE=$(curl -X POST -H "Content-Type: application/json" -d "$PAYLOAD" -w "\n%{http_code}" $WEBHOOK_URL)
+          HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
+          RESPONSE_BODY=$(echo "$RESPONSE" | sed '$d')
+          
+          echo "HTTP Status: $HTTP_STATUS"
+          echo "Response Body: $RESPONSE_BODY"
+          
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "Webhook送信に失敗しました。"
+            exit 1
+          else
+            echo "Webhook送信に成功しました。"
+          fi
