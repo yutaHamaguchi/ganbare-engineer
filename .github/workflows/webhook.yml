@@ -1,78 +1,127 @@
-name: CI
+name: Comprehensive CI and Notification
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created, edited]
   workflow_dispatch:
+
 jobs:
-  build:
+  notify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # すべての履歴をフェッチ
-      - name: Run a one-line script
-        run: echo Hello, world!
-      - name: Run a multi-line script
-        run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
-      - name: Send webhook on push or pull request
-        if: github.event_name == 'push' || github.event_name == 'pull_request'
+
+      - name: Send webhook notification
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
         run: |
+          # 共通の関数: Webhookペイロードの送信
+          send_webhook() {
+            local payload="$1"
+            local payload_size=$(echo -n "$payload" | wc -c)
+            echo "Payload size: $payload_size bytes"
+            
+            local response=$(curl -X POST -H "Content-Type: application/json" -d "$payload" -w "\n%{http_code}" $WEBHOOK_URL)
+            local http_status=$(echo "$response" | tail -n1)
+            local response_body=$(echo "$response" | sed '$d')
+            
+            echo "HTTP Status: $http_status"
+            echo "Response Body: $response_body"
+            
+            if [ "$http_status" -ne 200 ]; then
+              echo "Webhook送信に失敗しました。"
+              return 1
+            else
+              echo "Webhook送信に成功しました。"
+              return 0
+            fi
+          }
+
           # リポジトリ名を取得
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
-          
-          # イベントタイプに応じて情報を取得
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            PR_NUMBER="${{ github.event.pull_request.number }}"
-            COMMIT_MESSAGE="${{ github.event.pull_request.title }}"
+
+          case "${{ github.event_name }}" in
+            "push" | "pull_request")
+              if [ "${{ github.event_name }}" = "pull_request" ]; then
+                PR_NUMBER="${{ github.event.pull_request.number }}"
+                COMMIT_MESSAGE="${{ github.event.pull_request.title }}"
+                DIFF=$(gh pr diff $PR_NUMBER | head -n 1000)
+              else
+                COMMIT_MESSAGE="${{ github.event.head_commit.message }}"
+                DIFF=$(git diff HEAD^ HEAD | head -n 1000)
+              fi
+              
+              DIFF_LINES=$(echo "$DIFF" | wc -l)
+              
+              PAYLOAD=$(jq -n \
+                --arg repo "$REPO_NAME" \
+                --arg event "${{ github.event_name }}" \
+                --arg commit_msg "$COMMIT_MESSAGE" \
+                --arg diff_lines "$DIFF_LINES" \
+                --arg diff "$DIFF" \
+                '{
+                  repository: $repo,
+                  event_type: $event,
+                  commit_message: $commit_msg,
+                  diff_lines: $diff_lines,
+                  diff: $diff
+                }')
+              ;;
             
-            # PRの差分を取得（最大1000行に制限）
-            DIFF=$(gh pr diff $PR_NUMBER | head -n 1000)
-          else
-            COMMIT_MESSAGE="${{ github.event.head_commit.message }}"
+            "issues")
+              ISSUE_TITLE="${{ github.event.issue.title }}"
+              ISSUE_BODY="${{ github.event.issue.body }}"
+              ISSUE_NUMBER="${{ github.event.issue.number }}"
+              ISSUE_ACTION="${{ github.event.action }}"
+              
+              PAYLOAD=$(jq -n \
+                --arg repo "$REPO_NAME" \
+                --arg event "issue_$ISSUE_ACTION" \
+                --arg title "$ISSUE_TITLE" \
+                --arg body "$ISSUE_BODY" \
+                --arg number "$ISSUE_NUMBER" \
+                '{
+                  repository: $repo,
+                  event_type: $event,
+                  issue_title: $title,
+                  issue_body: $body,
+                  issue_number: $number
+                }')
+              ;;
             
-            # 最新のコミットの差分を取得（最大1000行に制限）
-            DIFF=$(git diff HEAD^ HEAD | head -n 1000)
-          fi
-          
-          DIFF_LINES=$(echo "$DIFF" | wc -l)
-          
-          # JSONペイロードを作成
-          PAYLOAD=$(jq -n \
-            --arg repo "$REPO_NAME" \
-            --arg event "${{ github.event_name }}" \
-            --arg commit_msg "$COMMIT_MESSAGE" \
-            --arg diff_lines "$DIFF_LINES" \
-            --arg diff "$DIFF" \
-            '{
-              repository: $repo,
-              event_type: $event,
-              commit_message: $commit_msg,
-              diff_lines: $diff_lines,
-              diff: $diff
-            }')
-          
-          # ペイロードサイズを確認
-          PAYLOAD_SIZE=$(echo -n "$PAYLOAD" | wc -c)
-          echo "Payload size: $PAYLOAD_SIZE bytes"
-          
-          # Webhookを送信
-          RESPONSE=$(curl -X POST -H "Content-Type: application/json" -d "$PAYLOAD" -w "\n%{http_code}" $WEBHOOK_URL)
-          HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
-          RESPONSE_BODY=$(echo "$RESPONSE" | sed '$d')
-          
-          echo "HTTP Status: $HTTP_STATUS"
-          echo "Response Body: $RESPONSE_BODY"
-          
-          if [ "$HTTP_STATUS" -ne 200 ]; then
-            echo "Webhook送信に失敗しました。"
-            exit 1
-          else
-            echo "Webhook送信に成功しました。"
-          fi
+            "issue_comment")
+              ISSUE_TITLE="${{ github.event.issue.title }}"
+              COMMENT_BODY="${{ github.event.comment.body }}"
+              ISSUE_NUMBER="${{ github.event.issue.number }}"
+              COMMENT_ACTION="${{ github.event.action }}"
+              
+              PAYLOAD=$(jq -n \
+                --arg repo "$REPO_NAME" \
+                --arg event "issue_comment_$COMMENT_ACTION" \
+                --arg title "$ISSUE_TITLE" \
+                --arg body "$COMMENT_BODY" \
+                --arg number "$ISSUE_NUMBER" \
+                '{
+                  repository: $repo,
+                  event_type: $event,
+                  issue_title: $title,
+                  comment_body: $body,
+                  issue_number: $number
+                }')
+              ;;
+            
+            *)
+              echo "Unsupported event: ${{ github.event_name }}"
+              exit 1
+              ;;
+          esac
+
+          send_webhook "$PAYLOAD"
