@@ -18,44 +18,5 @@ jobs:
           echo test, and deploy your project.
       - name: Send webhook on push or pull request
         if: github.event_name == 'push' || github.event_name == 'pull_request'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # リポジトリ名を取得
-          REPO_NAME="${GITHUB_REPOSITORY#*/}"
-          
-          # イベントタイプに応じて情報を取得
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            PR_NUMBER="${{ github.event.pull_request.number }}"
-            PR_TITLE="${{ github.event.pull_request.title }}"
-            PR_BODY="${{ github.event.pull_request.body }}"
-            COMMIT_MESSAGE="${{ github.event.pull_request.title }}"
-            
-            # PRの差分を取得
-            DIFF=$(gh pr diff $PR_NUMBER)
-            DIFF_LINES=$(echo "$DIFF" | wc -l)
-          else
-            COMMIT_MESSAGE="${{ github.event.head_commit.message }}"
-            
-            # 最新のコミットの差分を取得
-            DIFF=$(git diff HEAD^ HEAD)
-            DIFF_LINES=$(echo "$DIFF" | wc -l)
-          fi
-          
-          # JSONペイロードを作成
-          PAYLOAD=$(jq -n \
-            --arg repo "$REPO_NAME" \
-            --arg event "${{ github.event_name }}" \
-            --arg commit_msg "$COMMIT_MESSAGE" \
-            --arg diff_lines "$DIFF_LINES" \
-            --arg diff "$DIFF" \
-            '{
-              repository: $repo,
-              event_type: $event,
-              commit_message: $commit_msg,
-              diff_lines: $diff_lines,
-              diff: $diff
-            }')
-          
-          # Webhookを送信
-          curl -X POST -H "Content-Type: application/json" -d "$PAYLOAD" https://hook.us1.make.com/dxhee7nb14h6juhnu5xacetnsmw7792c
+          curl -X POST -H "Content-Type: application/json" -d '{"message": "A new commit or pull request was made on main branch."}' https://hook.us1.make.com/dxhee7nb14h6juhnu5xacetnsmw7792c
