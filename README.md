@@ -36,4 +36,4 @@
 ## 連絡先
 質問や提案がある場合は、[Issues](https://github.com/yourusername/your-repo-name/issues)セクションで新しいイシューを作成してください。
 
-変更テスト
+削除した！
