@@ -1,4 +1,5 @@
 name: Comprehensive CI and Notification
+
 on:
   push:
     branches: [ "main" ]
@@ -10,6 +11,12 @@ on:
     types: [created, edited]
   workflow_dispatch:
 
+# GITHUB_TOKENの権限を明示的に設定
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
 jobs:
   notify:
     runs-on: ubuntu-latest
@@ -20,6 +27,7 @@ jobs:
 
       - name: Send webhook notification
         env:
+          # GITHUB_TOKENは自動的に提供されるため、シークレットとして追加する必要はありません
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
         run: |
